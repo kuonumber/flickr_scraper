@@ -4,3 +4,5 @@ flickrapi
 numpy
 pillow
 tqdm
+python-dotenv
+loguru
