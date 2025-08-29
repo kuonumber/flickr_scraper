@@ -30,6 +30,183 @@ from utils.general import download_uri
 key = os.getenv("FLICKR_API_KEY")
 secret = os.getenv("FLICKR_API_SECRET")
 
+def get_user_albums(user_id=None, owner_name=None):
+    """獲取用戶的所有相簿列表
+    
+    Args:
+        user_id (str): Flickr 用戶 ID
+        owner_name (str): Flickr 用戶名
+        
+    Returns:
+        list: 相簿列表，每個相簿包含 id, title, description, count_photos
+    """
+    try:
+        flickr = FlickrAPI(key, secret)
+        
+        # 如果只有用戶名，需要先獲取用戶 ID
+        if owner_name and not user_id:
+            try:
+                # 搜尋用戶
+                user_search = flickr.people.findByUsername(username=owner_name)
+                if user_search and user_search.find('user') is not None:
+                    user_id = user_search.find('user').get('id')
+                    logger.info(f"找到用戶 '{owner_name}' 的 ID: {user_id}")
+                else:
+                    logger.error(f"找不到用戶名: {owner_name}")
+                    return []
+            except Exception as e:
+                logger.error(f"搜尋用戶 '{owner_name}' 時發生錯誤: {e}")
+                return []
+        
+        if not user_id:
+            logger.error("需要提供 user_id 或 owner_name")
+            return []
+        
+        # 獲取用戶的相簿列表
+        try:
+            albums = flickr.photosets.getList(user_id=user_id)
+            
+            if not albums or not albums.find('photosets'):
+                logger.warning(f"用戶 {user_id} 沒有相簿或相簿列表為空")
+                return []
+            
+            photosets = albums.find('photosets')
+            if photosets is None:
+                logger.warning(f"用戶 {user_id} 沒有相簿")
+                return []
+            
+            album_list = []
+            for photoset in photosets.findall('photoset'):
+                title_elem = photoset.find('title')
+                description_elem = photoset.find('description')
+                
+                album_info = {
+                    'id': photoset.get('id'),
+                    'title': title_elem.text if title_elem is not None else 'Untitled',
+                    'description': description_elem.text if description_elem is not None else '',
+                    'count_photos': int(photoset.get('count_photos', 0)),
+                    'count_videos': int(photoset.get('count_videos', 0))
+                }
+                album_list.append(album_info)
+                logger.info(f"相簿: {album_info['title']} (ID: {album_info['id']}, 照片: {album_info['count_photos']})")
+            
+            return album_list
+            
+        except Exception as e:
+            logger.error(f"獲取用戶 {user_id} 的相簿列表時發生錯誤: {e}")
+            return []
+        
+    except Exception as e:
+        logger.error(f"獲取相簿列表時發生錯誤: {e}")
+        return []
+
+def get_album_photos(album_id, n=10, size="large", user_id=None, owner_name=None):
+    """獲取相簿中的所有照片
+    
+    Args:
+        album_id (str): 相簿 ID
+        n (int): 照片數量限制
+        size (str): 照片尺寸
+        user_id (str): 用戶 ID（可選）
+        owner_name (str): 用戶名（可選）
+        
+    Returns:
+        dict: 包含相簿標題和照片 URL 列表的字典
+    """
+    try:
+        flickr = FlickrAPI(key, secret)
+        
+        # 根據選擇的尺寸決定要獲取的 extras 參數
+        if size not in SIZE_MAPPING:
+            logger.warning(f"不支援的尺寸 '{size}'，使用 'large' 替代")
+            size = "large"
+        
+        size_key = SIZE_MAPPING[size]
+        extras = f"url_o,{size_key}" if size != "original" else "url_o"
+        
+        # 先檢查相簿是否存在並獲取相簿資訊
+        try:
+            photoset_info = flickr.photosets.getInfo(photoset_id=album_id)
+            if not photoset_info:
+                logger.error(f"相簿 {album_id} 不存在")
+                return []
+            
+            photoset = photoset_info.find('photoset')
+            if not photoset:
+                logger.error(f"無法獲取相簿 {album_id} 的資訊")
+                return []
+            
+            # 獲取相簿標題和擁有者 ID
+            title_elem = photoset.find('title')
+            title = title_elem.text if title_elem is not None else f"Album {album_id}"
+            
+            owner_elem = photoset.find('owner')
+            album_owner_id = owner_elem.get('nsid') if owner_elem is not None else None
+            
+            logger.info(f"找到相簿: {title}")
+            if album_owner_id:
+                logger.info(f"相簿擁有者 ID: {album_owner_id}")
+            
+            # 如果沒有提供用戶 ID，使用相簿的擁有者 ID
+            if not user_id and not owner_name and album_owner_id:
+                user_id = album_owner_id
+                logger.info(f"自動使用相簿擁有者 ID: {user_id}")
+            
+        except Exception as e:
+            logger.error(f"相簿 {album_id} 不存在或無法訪問: {e}")
+            return {"title": f"Album_{album_id}", "urls": []}
+        
+        # 獲取相簿中的照片
+        photos = flickr.photosets.getPhotos(
+            photoset_id=album_id,
+            extras=extras,
+            per_page=500
+        )
+        
+        if not photos or not photos.find('photoset'):
+            logger.warning(f"相簿 {album_id} 中沒有照片")
+            return {"title": title, "urls": []}
+        
+        photoset = photos.find('photoset')
+        photo_list = photoset.findall('photo')
+        
+        if not photo_list:
+            logger.warning(f"相簿 {album_id} 中沒有照片")
+            return {"title": title, "urls": []}
+        
+        urls = []
+        for i, photo in enumerate(photo_list):
+            if i >= n:
+                break
+                
+            # 獲取照片 URL
+            url = None
+            if size == "original":
+                url = photo.get("url_o")
+            else:
+                url = photo.get(size_key)
+            
+            # 如果選擇的尺寸沒有，則嘗試其他尺寸作為備選
+            if url is None:
+                fallback_sizes = ["url_l", "url_c", "url_z", "url_m", "url_n"]
+                for fallback in fallback_sizes:
+                    url = photo.get(fallback)
+                    if url:
+                        break
+            
+            # 最後的備選方案
+            if url is None:
+                url = f"https://farm{photo.get('farm')}.staticflickr.com/{photo.get('server')}/{photo.get('id')}_{photo.get('secret')}_b.jpg"
+            
+            urls.append(url)
+        
+        logger.info(f"從相簿 {title} (ID: {album_id}) 獲取到 {len(urls)} 張照片")
+        return {"title": title, "urls": urls}
+        
+    except Exception as e:
+        logger.error(f"獲取相簿照片時發生錯誤: {e}")
+        return {"title": f"Album_{album_id}", "urls": []}
+
 # 設定 loguru 日誌
 def setup_logging():
     """設定 loguru 日誌配置"""
@@ -91,16 +268,20 @@ SIZE_MAPPING = {
     "original": "url_o"      # 原始尺寸
 }
 
-def get_urls(search="honeybees on flowers", n=10, download=False, size="large", thread_id=0):
+def get_urls(search="honeybees on flowers", n=10, download=False, size="large", thread_id=0, output_dir="images", user_id=None, owner_name=None, all_albums=False, album_id=None):
     """Fetch Flickr URLs for `search` term images, optionally downloading them; supports up to `n` images.
     
     Args:
         search (str): 搜尋關鍵字
         n (int): 照片數量
         download (bool): 是否下載照片
-        size (str): 照片尺寸，可選值：square, large_square, thumbnail, small, small_320, 
-                   medium, medium_640, medium_800, large, large_1600, large_2048, original
-        thread_id (int): 線程 ID，用於多線程識別
+        size (str): 照片尺寸
+        thread_id (int): 線程 ID
+        output_dir (str): 輸出目錄路徑
+        user_id (str): Flickr 用戶 ID（可選）
+        owner_name (str): Flickr 用戶名（可選）
+        all_albums (bool): 是否搜尋所有相簿（當鎖定用戶時）
+        album_id (str): 相簿 ID（可選，優先於搜尋關鍵字）
     """
     t = time.time()
     
@@ -118,16 +299,115 @@ def get_urls(search="honeybees on flowers", n=10, download=False, size="large", 
     
     logger.info(f"[線程 {thread_id}] 開始搜尋：{search}")
     
-    photos = flickr.walk(
-        text=search,  # http://www.flickr.com/services/api/flickr.photos.search.html
-        extras=extras,
-        per_page=500,  # 1-500
-        license=license,
-        sort="relevance",
-    )
+    # 準備搜尋參數
+    search_params = {
+        "extras": extras,
+        "per_page": 500,  # 1-500
+        "license": license,
+        "sort": "relevance",
+    }
+    
+    # 添加創作者鎖定參數
+    if user_id:
+        search_params["user_id"] = user_id
+        logger.info(f"[線程 {thread_id}] 鎖定用戶 ID: {user_id}")
+    elif owner_name:
+        search_params["owner_name"] = owner_name
+        logger.info(f"[線程 {thread_id}] 鎖定用戶名: {owner_name}")
+    
+    # 根據是否指定相簿 ID 來決定搜尋方式
+    if album_id:
+        # 相簿模式：直接從相簿獲取照片
+        logger.info(f"[線程 {thread_id}] 相簿模式：從相簿 ID {album_id} 獲取照片")
+        album_result = get_album_photos(album_id, n, size, user_id, owner_name)
+        
+        # 檢查是否成功獲取到照片
+        if not album_result or not album_result['urls']:
+            logger.error(f"[線程 {thread_id}] 無法從相簿 {album_id} 獲取照片")
+            return {
+                'search': f"album_{album_id}",
+                'urls': [],
+                'count': 0,
+                'elapsed_time': time.time() - t,
+                'thread_id': thread_id,
+                'empty_files': 0,
+                'api_limit_reached': False
+            }
+        
+        urls = album_result['urls']
+        album_title = album_result['title']
+        
+        if download:
+            # 建立下載目錄，使用相簿標題
+            # 清理標題中的特殊字符，避免檔案系統問題
+            safe_title = "".join(c for c in album_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_title = safe_title.replace(' ', '_')
+            if not safe_title:
+                safe_title = f"Album_{album_id}"
+            
+            dir_path = Path.cwd() / output_dir / safe_title
+            dir_path.mkdir(parents=True, exist_ok=True)
+            
+            # 下載照片
+            downloaded_count = 0
+            for i, url in enumerate(urls):
+                if downloaded_count >= n:
+                    break
+                    
+                try:
+                    file_path = download_uri(url, dir_path)
+                    if file_path and file_path.exists():
+                        file_size = file_path.stat().st_size
+                        if file_size >= 1000:
+                            downloaded_count += 1
+                            logger.info(f"[線程 {thread_id}] 下載相簿照片 {downloaded_count}/{n}: {file_path.name}")
+                        else:
+                            logger.warning(f"[線程 {thread_id}] 檢測到空檔案，已刪除: {file_path.name}")
+                            try:
+                                file_path.unlink()
+                            except:
+                                pass
+                    else:
+                        logger.error(f"[線程 {thread_id}] 下載失敗: {url}")
+                        
+                    time.sleep(0.1)  # 避免 API 限制
+                    
+                except Exception as e:
+                    logger.error(f"[線程 {thread_id}] 處理相簿照片時發生錯誤: {e}")
+            
+            logger.info(f"[線程 {thread_id}] 相簿照片已儲存至 {dir_path}")
+        
+        return {
+            'search': f"album_{album_id}",
+            'urls': urls,
+            'count': len(urls),
+            'elapsed_time': time.time() - t,
+            'thread_id': thread_id,
+            'empty_files': 0,
+            'api_limit_reached': False
+        }
+    
+    # 根據是否啟用所有相簿來決定搜尋方式
+    if (user_id or owner_name) and all_albums:
+        # 鎖定用戶且啟用所有相簿：搜尋該用戶的所有照片
+        logger.info(f"[線程 {thread_id}] 啟用所有相簿模式：搜尋用戶的所有照片")
+        if search and search.strip():
+            # 如果有關鍵字，在用戶所有相簿中搜尋
+            search_params["text"] = search
+            logger.info(f"[線程 {thread_id}] 在用戶所有相簿中搜尋關鍵字：{search}")
+        else:
+            # 如果沒有關鍵字，使用通用關鍵字搜尋用戶所有相簿
+            search_params["text"] = "*"
+            logger.info(f"[線程 {thread_id}] 使用通用關鍵字搜尋用戶所有相簿")
+    else:
+        # 正常模式：使用關鍵字搜尋
+        search_params["text"] = search
+        logger.info(f"[線程 {thread_id}] 使用關鍵字搜尋：{search}")
+    
+    photos = flickr.walk(**search_params)
 
     if download:
-        dir_path = Path.cwd() / "images" / search.replace(" ", "_")
+        dir_path = Path.cwd() / output_dir / search.replace(" ", "_")
         dir_path.mkdir(parents=True, exist_ok=True)
 
     urls = []
@@ -228,10 +508,10 @@ def get_urls(search="honeybees on flowers", n=10, download=False, size="large", 
 
 def process_search_keyword(args):
     """單個關鍵字處理函數，用於多線程"""
-    search, n, download, size, thread_id = args
-    return get_urls(search=search, n=n, download=download, size=size, thread_id=thread_id)
+    search, n, download, size, thread_id, output_dir, user_id, owner_name, all_albums, album_id = args
+    return get_urls(search=search, n=n, download=download, size=size, thread_id=thread_id, output_dir=output_dir, user_id=user_id, owner_name=owner_name, all_albums=all_albums, album_id=album_id)
 
-def run_multithread_search(search_terms, n, download, size, max_workers=None):
+def run_multithread_search(search_terms, n, download, size, max_workers=None, output_dir="images", user_id=None, owner_name=None, all_albums=False, album_id=None):
     """使用多線程處理多個搜尋關鍵字
     
     Args:
@@ -240,6 +520,11 @@ def run_multithread_search(search_terms, n, download, size, max_workers=None):
         download (bool): 是否下載照片
         size (str): 照片尺寸
         max_workers (int): 最大線程數，預設為關鍵字數量或 CPU 核心數 * 2
+        output_dir (str): 輸出目錄路徑
+        user_id (str): Flickr 用戶 ID（可選）
+        owner_name (str): Flickr 用戶名（可選）
+        all_albums (bool): 是否搜尋所有相簿（當鎖定用戶時）
+        album_id (str): 相簿 ID（可選）
     """
     if not max_workers:
         # 對於 I/O 密集型任務，線程數可以比 CPU 核心數多
@@ -253,7 +538,7 @@ def run_multithread_search(search_terms, n, download, size, max_workers=None):
     print("=" * 50)
     
     # 準備線程參數
-    thread_args = [(search, n, download, size, i) for i, search in enumerate(search_terms)]
+    thread_args = [(search, n, download, size, i, output_dir, user_id, owner_name, all_albums, album_id) for i, search in enumerate(search_terms)]
     
     # 使用線程池執行
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -320,12 +605,45 @@ if __name__ == "__main__":
                             "large_2048(2048x1365), original")
     parser.add_argument("--max-workers", type=int, default=None, 
                        help="最大線程數，預設為關鍵字數量或 CPU 核心數 * 2")
+    parser.add_argument("--output-dir", type=str, default="images", 
+                       help="圖片輸出目錄路徑 (預設: images)")
+    parser.add_argument("--user-id", type=str, default=None, 
+                       help="Flickr 用戶 ID，鎖定特定創作者")
+    parser.add_argument("--owner-name", type=str, default=None, 
+                       help="Flickr 用戶名，鎖定特定創作者")
+    parser.add_argument("--all-albums", action="store_true", 
+                       help="當鎖定用戶時，搜尋所有相簿（不限制關鍵字）")
+    parser.add_argument("--album-id", type=str, default=None, 
+                       help="相簿 ID，直接從指定相簿下載照片")
+    parser.add_argument("--list-albums", action="store_true", 
+                       help="列出用戶的所有相簿（需要 --user-id 或 --owner-name）")
+    parser.add_argument("--download-all-albums", action="store_true", 
+                       help="下載用戶的所有相簿（需要 --user-id 或 --owner-name）")
     opt = parser.parse_args()
 
     print(f"🔍 搜尋關鍵字: {opt.search}")
     print(f"📏 照片尺寸: {opt.size}")
     print(f"📊 每個關鍵字照片數量: {opt.n}")
     print(f"💾 下載模式: {'開啟' if opt.download else '關閉'}")
+    print(f"📁 輸出目錄: {opt.output_dir}")
+    
+    # 顯示創作者鎖定資訊
+    if opt.user_id:
+        print(f"👤 鎖定用戶 ID: {opt.user_id}")
+    elif opt.owner_name:
+        print(f"👤 鎖定用戶名: {opt.owner_name}")
+    else:
+        print(f"👤 創作者鎖定: 無（搜尋所有用戶）")
+    
+    # 顯示相簿搜尋模式
+    if opt.album_id:
+        print(f"📚 相簿搜尋模式: 指定相簿 (ID: {opt.album_id})")
+    elif opt.all_albums and (opt.user_id or opt.owner_name):
+        print(f"📚 相簿搜尋模式: 所有相簿")
+    elif opt.user_id or opt.owner_name:
+        print(f"📚 相簿搜尋模式: 關鍵字限制")
+    else:
+        print(f"📚 相簿搜尋模式: 標準搜尋")
     
     # 檢查環境變數是否設定
     if not key or not secret:
@@ -339,6 +657,107 @@ if __name__ == "__main__":
     print("✅ Flickr API 憑證已載入")
     print()
 
+    # 處理相簿列表功能
+    if opt.list_albums:
+        if not opt.user_id and not opt.owner_name:
+            print("❌ 錯誤：--list-albums 需要 --user-id 或 --owner-name 參數")
+            exit(1)
+        
+        print(f"📋 正在獲取用戶相簿列表...")
+        albums = get_user_albums(opt.user_id, opt.owner_name)
+        
+        if albums:
+            print(f"\n📚 找到 {len(albums)} 個相簿：")
+            print("=" * 60)
+            for i, album in enumerate(albums, 1):
+                print(f"{i:2d}. {album['title']}")
+                print(f"    ID: {album['id']}")
+                print(f"    照片: {album['count_photos']} 張")
+                if album['count_videos'] > 0:
+                    print(f"    影片: {album['count_videos']} 個")
+                if album['description']:
+                    print(f"    描述: {album['description'][:100]}{'...' if len(album['description']) > 100 else ''}")
+                print()
+        else:
+            print("❌ 沒有找到相簿或發生錯誤")
+        exit(0)
+
+    # 處理全相簿下載功能
+    if opt.download_all_albums:
+        if not opt.user_id and not opt.owner_name:
+            print("❌ 錯誤：--download-all-albums 需要 --user-id 或 --owner-name 參數")
+            exit(1)
+        
+        print(f"🚀 正在下載用戶的所有相簿...")
+        albums = get_user_albums(opt.user_id, opt.owner_name)
+        
+        if not albums:
+            print("❌ 沒有找到相簿或發生錯誤")
+            exit(1)
+        
+        print(f"📚 找到 {len(albums)} 個相簿，開始多線程下載...")
+        
+        # 使用多線程下載所有相簿
+        def download_album_worker(album_data):
+            """下載單個相簿的工作函數"""
+            album = album_data['album']
+            thread_id = album_data['thread_id']
+            
+            logger.info(f"[線程 {thread_id}] 開始下載相簿: {album['title']} (ID: {album['id']})")
+            
+            result = get_urls(
+                search="",  # 空關鍵字，使用相簿 ID
+                n=opt.n,
+                download=opt.download,
+                size=opt.size,
+                thread_id=thread_id,
+                output_dir=opt.output_dir,
+                user_id=opt.user_id,
+                owner_name=opt.owner_name,
+                all_albums=False,  # 不是全相簿模式
+                album_id=album['id']  # 直接指定相簿 ID
+            )
+            
+            logger.info(f"[線程 {thread_id}] 相簿 {album['title']} 下載完成: {result['count']} 張照片")
+            return result
+        
+        # 準備工作參數
+        album_tasks = []
+        for i, album in enumerate(albums, 1):
+            album_tasks.append({
+                'album': album,
+                'thread_id': i
+            })
+        
+        # 使用 ThreadPoolExecutor 進行多線程下載
+        start_time = time.time()
+        total_photos = 0
+        
+        with ThreadPoolExecutor(max_workers=opt.max_workers) as executor:
+            # 提交所有任務
+            future_to_album = {
+                executor.submit(download_album_worker, task): task 
+                for task in album_tasks
+            }
+            
+            # 處理完成的任務
+            for future in as_completed(future_to_album):
+                album_task = future_to_album[future]
+                try:
+                    result = future.result()
+                    total_photos += result['count']
+                    print(f"✅ 相簿 {album_task['album']['title']} 完成: {result['count']} 張照片")
+                except Exception as exc:
+                    logger.error(f"相簿 {album_task['album']['title']} 下載失敗: {exc}")
+                    print(f"❌ 相簿 {album_task['album']['title']} 下載失敗: {exc}")
+        
+        elapsed_time = time.time() - start_time
+        print(f"\n🎯 所有相簿下載完成！")
+        print(f"📊 總計: {total_photos} 張照片")
+        print(f"⏱️  總耗時: {elapsed_time:.1f}s")
+        print(f"🚀 使用 {opt.max_workers} 個線程並行處理")
+        exit(0)
+
     # 根據關鍵字數量決定是否使用多線程
     if len(opt.search) > 1:
         # 多個關鍵字，使用多線程
@@ -347,7 +766,11 @@ if __name__ == "__main__":
             n=opt.n,
             download=opt.download,
             size=opt.size,
-            max_workers=opt.max_workers
+            max_workers=opt.max_workers,
+            output_dir=opt.output_dir,
+            user_id=opt.user_id,
+            owner_name=opt.owner_name,
+            all_albums=opt.all_albums
         )
     else:
         # 單個關鍵字，使用單線程
@@ -357,6 +780,11 @@ if __name__ == "__main__":
             n=opt.n, 
             download=opt.download, 
             size=opt.size,
-            thread_id=0
+            thread_id=0,
+            output_dir=opt.output_dir,
+            user_id=opt.user_id,
+            owner_name=opt.owner_name,
+            all_albums=opt.all_albums,
+            album_id=opt.album_id
         )
         print(f"\n✅ 完成: {result['count']} 張照片 ({result['elapsed_time']:.1f}s)")

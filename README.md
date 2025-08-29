@@ -15,6 +15,20 @@ The Flickr Scraper is a [Python](https://www.python.org/) tool designed to help 
 - **Direct Download**: Easily download images to assemble your [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) [dataset](https://www.ultralytics.com/glossary/benchmark-dataset).
 - **Streamlined Data Collection**: Simplify the process of gathering training data for [model training](https://docs.ultralytics.com/modes/train/) with YOLO models.
 
+## 🚀 Additional Features (Community Contributions)
+
+This enhanced version includes additional features contributed by the community:
+
+- **Photo Size Selection**: Choose from multiple image sizes (square, medium, large, original)
+- **Multi-Threading**: Download multiple keywords concurrently for improved performance
+- **Custom Output Directory**: Specify custom download paths
+- **Creator Lock**: Download photos from specific Flickr users or usernames
+- **Album Management**: Download from specific albums or all user albums
+- **Smart Download**: Skip existing files and handle API rate limits automatically
+- **Comprehensive Logging**: Detailed logging with loguru for debugging and monitoring
+
+For detailed usage examples of these additional features, see [CUSTOM_FEATURES.md](docs/CUSTOM_FEATURES.md).
+
 ## 🔧 Requirements
 
 Ensure you have Python 3.7 or later installed. The necessary dependencies can be installed using [pip](https://pip.pypa.io/en/stable/):
@@ -26,6 +40,8 @@ pip install -U -r requirements.txt
 Key packages include:
 
 - `flickrapi`: A Python wrapper for the Flickr API, essential for interacting with Flickr services. You can find more details on the [`flickrapi` PyPI page](https://pypi.org/project/flickrapi/).
+- `loguru`: Advanced logging library for better debugging and monitoring
+- `python-dotenv`: Environment variable management for secure API key handling
 
 ## 🛠️ Installation
 
@@ -40,6 +56,10 @@ cd flickr_scraper
 
 # Install the required packages
 pip install -U -r requirements.txt
+
+# Set up environment variables (optional but recommended)
+cp .env.example .env  # Copy example environment file
+# Edit .env with your Flickr API credentials
 ```
 
 ## ⚙️ Running the Scraper
@@ -47,23 +67,44 @@ pip install -U -r requirements.txt
 Before you begin scraping images:
 
 1.  **Get a Flickr API Key**: Obtain your unique API key and secret by applying [here](https://www.flickr.com/services/apps/create/apply).
-2.  **Configure API Credentials**: Insert your API key and secret into the `flickr_scraper.py` script:
-
-```python
-# flickr_scraper.py
-# Replace with your actual Flickr API key and secret
-key = "YOUR_API_KEY"
-secret = "YOUR_API_SECRET"
-```
+2.  **Configure API Credentials**: You can either:
+    
+    **Option A**: Insert your API key and secret directly into the `flickr_scraper.py` script:
+    ```python
+    # flickr_scraper.py
+    # Replace with your actual Flickr API key and secret
+    key = "YOUR_API_KEY"
+    secret = "YOUR_API_SECRET"
+    ```
+    
+    **Option B (Recommended)**: Use environment variables for better security:
+    ```bash
+    # Create .env file
+    echo "FLICKR_API_KEY=your_actual_key" > .env
+    echo "FLICKR_API_SECRET=your_actual_secret" >> .env
+    ```
 
 3.  **Execute the Script**: Run the script from your terminal, specifying your search query, the number of images to fetch (`--n`), and the `--download` flag to save them locally. Downloaded images are saved by default to the `flickr_scraper/images/` directory, organized into subfolders based on the search query.
 
     **Important**: Be mindful of Flickr's API rate limits and terms of service. Excessive requests may lead to temporary or permanent blocking. Refer to the official [Flickr API documentation](https://www.flickr.com/services/developer/api/) for detailed usage guidelines.
 
-Example command to download 10 images matching 'honeybees on flowers':
+Example commands:
 
+**Basic usage** - Download 10 images matching 'honeybees on flowers':
 ```bash
 python3 flickr_scraper.py --search 'honeybees on flowers' --n 10 --download
+```
+
+**Advanced features** - Download with custom size and output directory:
+```bash
+python3 flickr_scraper.py --search 'sunset' 'beach' --n 5 --download --size large --output-dir 'vacation_photos' --max-workers 4
+```
+
+**Album management** - Download from a specific user's album:
+```bash
+
+python3 flickr_scraper.py --album-id '99999999999999999' --download --size medium
+
 ```
 
 You should see output indicating the download progress:
@@ -88,7 +129,18 @@ If the Flickr Scraper tool helps your research or work, please consider citing i
 
 ## 🤝 Contributing
 
-Contributions are welcome! We value input from the community to fix bugs, add features, or improve documentation. Please see our [Contributing Guide](https://docs.ultralytics.com/help/contributing/) for details on how to get started. Don't forget to share your experiences and feedback by completing our [Survey](https://www.ultralytics.com/survey?utm_source=github&utm_medium=social&utm_campaign=Survey). Thank you 🙏 to all our contributors!
+Contributions are welcome! We value input from the community to fix bugs, add features, or improve documentation. Please see our [Contributing Guide](https://docs.ultralytics.com/help/contributing/) for details on how to get started. Don't forget to share your experiences and feedback by completing our [Survey](https://www.ultralytics.com/survey?utm_source=github&utm_medium=social&utm_campaign=Survey). 
+
+### 🎉 Community Contributions
+
+Special thanks to community contributors who have enhanced this tool with additional features:
+- **Photo size selection** and **multi-threading** capabilities
+- **Custom output directories** and **creator lock** functionality  
+- **Album management** features for better organization
+- **Smart download** with duplicate file detection and API rate limit handling
+- **Comprehensive logging** system for better debugging
+
+Thank you 🙏 to all our contributors!
 
 [![Ultralytics open-source contributors](https://raw.githubusercontent.com/ultralytics/assets/main/im/image-contributors.png)](https://github.com/ultralytics/ultralytics/graphs/contributors)
 

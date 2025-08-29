@@ -104,7 +104,7 @@ def download_uri(uri, dir="./", max_retries=3):
                 return None
         except Exception as e:
             logger.error(f"處理檔案失敗: {uri} - {e}")
-            return None
+            return None屋
     
     # 如果所有重試都失敗了
     logger.error(f"下載失敗: {uri} - 已重試 {max_retries} 次，最終失敗")
